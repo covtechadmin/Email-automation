@@ -1,5 +1,3 @@
-import streamlit as st
-
 import os
 
 def clean_payload(payload: dict) -> dict:
@@ -384,7 +382,18 @@ def get_default_payload(selected_service):
 # Main Streamlit App
 def main():
     st.title("TESTB2B")
-    # Sidebar for configuration
+    
+    # First, get the selected service so it's available for the sidebar
+    selected_service = st.selectbox(
+        "Choose your service offering:",
+        list(SERVICES_CONFIG.keys()),
+        index=0,
+        help="Select the service you want to generate leads for",
+        key="main_selected_service"
+    )
+    st.info(f"**{selected_service}**: {SERVICES_CONFIG[selected_service]['description']}")
+    
+    # Sidebar for configuration - Now selected_service is available
     with st.sidebar:
         st.header("⚙️ Configuration")
         # Display service description only
@@ -394,30 +403,22 @@ def main():
         sender_name = st.text_input("Your Name", value="Nikhil Sharma")
         value_proposition = st.text_area(
             "Value Proposition", 
-            value=SERVICES_CONFIG[selected_service]['value_proposition'] if 'selected_service' in locals() else '',
+            value=SERVICES_CONFIG[selected_service]['value_proposition'],
             help="This is auto-populated based on your selected service"
         )
         pain_point = st.text_area(
             "Pain Points You Address", 
-            value=SERVICES_CONFIG[selected_service]['pain_points'] if 'selected_service' in locals() else '',
+            value=SERVICES_CONFIG[selected_service]['pain_points'],
             help="This is auto-populated based on your selected service"
         )
         cta = st.text_input("Call to Action", value="Would you be open to a 15-minute call to discuss your current challenges and explore how our expertise can help?")
         st.divider()
-        st.success("✅ API Key is set in code.")
+        #st.success("✅ API Key is set in code.")
+    
     # Main content area
     st.markdown("*AI-powered lead generation for your selected service*")
     # Lead Generation Filters in main area
-    col0, col1, col2, col3 = st.columns(4)
-    with col0:
-        selected_service = st.selectbox(
-            "Choose your service offering:",
-            list(SERVICES_CONFIG.keys()),
-            index=0,
-            help="Select the service you want to generate leads for",
-            key="main_selected_service"
-        )
-        st.info(f"**{selected_service}**: {SERVICES_CONFIG[selected_service]['description']}" )
+    col1, col2, col3 = st.columns(3)
     with col1:
         geography = st.selectbox(
             "Target Geography",
