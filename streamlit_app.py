@@ -437,7 +437,7 @@ def get_default_payload(selected_service):
 
 # Main Streamlit App
 def main():
-    st.title("TESTB2B")
+    st.title("AI DealScouter")
     
     # First, get the selected service so it's available for the sidebar
     selected_service = st.selectbox(
@@ -644,6 +644,9 @@ Research the most active and current platforms in {geography} for:
             type="secondary"
         )
         
+        # Instruction message above the table
+        st.info("👇 Select a row from below to generate content")
+        
         # Display the dataframe with selection
         selected_indices = st.dataframe(
             st.session_state["result_df"], 
@@ -706,8 +709,6 @@ Research the most active and current platforms in {geography} for:
                         st.success("✅ Company Profile Generated!")
                         with st.expander("🏢 Sales Intelligence", expanded=True):
                             st.markdown(content)
-        else:
-            st.info("👆 Select a row from the table above to generate content")
     else:
         st.text_area("Results", value=st.session_state["result_text"], height=400)
     
