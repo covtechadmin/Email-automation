@@ -23,6 +23,7 @@ import requests
 import json
 import os
 from typing import Iterator
+import io
 
 # Page configuration
 st.set_page_config(
@@ -144,7 +145,7 @@ def stream_perplexity_response(payload: dict) -> Iterator[str]:
         error_msg = f"Request Exception: {str(e)}"
         yield f"\n**Request Exception:**\n\n{error_msg}\n"
 
-def generate_content(contact_data, sender_company, sender_name, value_proposition, pain_point, cta, content_type, selected_service):
+def generate_content(contact_data, sender_company, sender_name, value_proposition, pain_point, cta, content_type, selected_service, geography=None):
     """Generate different types of content using Perplexity API"""
     
     # Extract contact details from the selected row
@@ -156,68 +157,123 @@ def generate_content(contact_data, sender_company, sender_name, value_propositio
     location = contact_data.get("Location (State)", "")
     
     if content_type == "Generate Personalized Email":
-        # First, research LinkedIn profile using Google search
-        linkedin_prompt = f"""
-Perform Google search with these queries to find LinkedIn profile information:
+        # Determine search strategy based on geography
+        if geography == "China":
+            search_prompt = f"""
+Search using both Baidu and Google with these queries to find professional information about {contact_name}:
 
+**Baidu Search Queries:**
+1. "{contact_name}" "{company_name}" {industry}
+2. "{contact_name}" 职位 {company_name}
+3. "{contact_name}" {selected_service.lower()} 专业
+4. "{contact_name}" "{company_name}" 高管
+5. "{contact_name}" {company_name} 管理层
+
+**Google Backup Queries:**
 1. site:linkedin.com "{contact_name}" "{company_name}"
-2. site:linkedin.com "{contact_name}" {industry} 
-3. "{contact_name}" LinkedIn {company_name} {selected_service.lower()}
+2. "{contact_name}" {company_name} {industry} professional
+3. "{contact_name}" {selected_service.lower()} expertise
+4. "{contact_name}" "{company_name}" Google search
+5. "{contact_name}" {company_name} executive profile
 
-From the LinkedIn profile results, extract:
+**Enhanced Fallback Searches:**
+1. "{company_name}" "{contact_name}" management team
+2. "{contact_name}" {industry} China professional
+3. "{company_name}" leadership {industry} China
+4. "{contact_name}" {company_name} news announcement
+
+From the search results, extract professional insights such as:
+• Current role and responsibilities at {company_name}
+• Industry experience and expertise areas
+• Recent company developments or industry involvement
+• Educational background or certifications
+• Any mentions of {selected_service.lower()} or {industry} challenges
+• Company context and organizational structure
+• Professional background and career progression
+
+Provide actionable insights for personalized outreach, focusing on their professional background and company context. If specific personal details are limited, focus on company role and industry expertise.
+""".strip()
+        else:
+            search_prompt = f"""
+Search using Google and professional networks with these queries:
+
+**Primary Google Queries:**
+1. site:linkedin.com "{contact_name}" "{company_name}"
+2. "{contact_name}" {company_name} {industry} professional
+3. "{contact_name}" {selected_service.lower()} expertise
+4. "{company_name}" {contact_name} news press release
+
+**Enhanced Fallback Searches (if LinkedIn data is insufficient):**
+1. "{contact_name}" "{company_name}" Google search
+2. "{contact_name}" {industry} conference speaker
+3. "{contact_name}" {company_name} interview article
+4. "{contact_name}" {selected_service.lower()} publication
+5. "{contact_name}" "{company_name}" executive profile
+6. "{contact_name}" {company_name} management team
+7. "{contact_name}" {industry} expert professional
+
+**Company Context Searches:**
+1. "{company_name}" leadership team {industry}
+2. "{company_name}" executives management
+3. "{company_name}" {industry} department heads
+
+From the search results, extract:
 • Current role tenure and key responsibilities at {company_name}
 • Recent professional posts, articles, or activity (last 60 days)
 • Educational background and industry certifications
 • Any mentions of {selected_service.lower()}, {industry} challenges, or related projects
 • Professional interests and company developments they've shared
+• Company context and organizational structure
+• Industry involvement and expertise areas
 
-Provide 3-4 specific insights that can be used for personalized email outreach, including any recent activity or posts that show their current business focus.
+Provide 3-4 specific insights that can be used for personalized email outreach. If LinkedIn data is limited, focus on company context and industry expertise.
 """.strip()
         
-        # Get enhanced LinkedIn research first
-        linkedin_payload = {
+        # Get enhanced professional research
+        research_payload = {
             "model": "sonar-pro",
-            "messages": [{"role": "user", "content": linkedin_prompt}],
+            "messages": [{"role": "user", "content": search_prompt}],
             "max_tokens": 600,
             "temperature": 0.2
         }
         
         try:
-            linkedin_chunks = list(stream_perplexity_response(linkedin_payload))
-            linkedin_response = "".join(str(chunk) for chunk in linkedin_chunks)
-            linkedin_json = json.loads(linkedin_response)
-            linkedin_insights = linkedin_json["choices"][0]["message"]["content"]
+            research_chunks = list(stream_perplexity_response(research_payload))
+            research_response = "".join(str(chunk) for chunk in research_chunks)
+            research_json = json.loads(research_response)
+            professional_insights = research_json["choices"][0]["message"]["content"]
         except:
-            linkedin_insights = f"Recent {industry} professional with {contact_title} role at {company_name}"
+            professional_insights = f"Experienced {industry} professional in {contact_title} role at {company_name}, likely involved in {selected_service.lower()} decision-making processes."
         
-        # Now craft email using enhanced LinkedIn insights
+        # Now craft email using enhanced professional insights
         prompt = f"""
 Write a compelling B2B sales email to {contact_name} at {company_name}:
 
-**LINKEDIN RESEARCH FINDINGS:** 
-{linkedin_insights}
+**PROFESSIONAL RESEARCH FINDINGS:** 
+{professional_insights}
 
 **EMAIL STRUCTURE:**
 • **Greeting**: "Hi {contact_name}," 
-• **Personal Connection**: Reference specific LinkedIn finding (recent post, achievement, company update, or professional background)
-• **Industry Insight**: Connect to {industry} challenge related to {selected_service.lower()} that's relevant to their role
-• **Value Bridge**: How {sender_company} addresses this challenge: {value_proposition}
+• **Industry Opening**: Start with relevant {industry} industry insight or trend that affects {company_name}
+• **Company Connection**: Reference {company_name}'s position in {industry} or recent company developments
+• **Value Bridge**: Connect industry challenges to how {sender_company} addresses {selected_service.lower()} needs: {value_proposition}
 • **Call to Action**: {cta}
 
 **WRITING GUIDELINES:**
 - Maximum 90 words total
-- Use insights from LinkedIn research to create genuine personalization
-- Reference their actual LinkedIn activity or background in opening
+- Focus on industry expertise and company relevance rather than personal details
 - Professional yet conversational tone
-- Industry-specific terminology they'd recognize
+- Industry-specific terminology for {industry}
 - Location context if relevant: {location}
+- Never mention inability to find personal information
 
-**PERSONALIZATION REQUIREMENTS:**
-- Must reference specific finding from LinkedIn research
-- Connect their professional interests to {selected_service.lower()} opportunity
-- Show you've researched them personally, not using a template
+**CONTENT REQUIREMENTS:**
+- Lead with industry insight that's relevant to their role
+- Show understanding of {company_name}'s business needs
+- Demonstrate expertise in {selected_service.lower()} services
+- Create value-focused connection rather than personal connection
 
-Make the email feel like you've genuinely researched their background and current focus.
+Make the email feel professionally researched and industry-focused.
 """.strip()
     
     elif content_type == "Generate Contact Profile":
@@ -233,7 +289,7 @@ Search Google with: site:linkedin.com "{contact_name}" "{company_name}" to find:
 • Industry connections and endorsements
 
 **ENHANCED PROFILE RESEARCH:**
-Also search: site:linkedin.com "{contact_name}" {industry} to discover:
+Also search: "{contact_name}" {industry} to discover:
 • Industry expertise and thought leadership
 • Speaking engagements or conference participation
 • Published articles or professional insights
@@ -362,7 +418,7 @@ def get_default_payload(selected_service):
   "messages": [
     {
       "role": "system",
-      "content": f"You are an elite B2B lead researcher with 10+ years specializing in global chemical manufacturing and pharmaceutical services, with deep expertise in {selected_service.lower()}, {', '.join(SERVICES_CONFIG[selected_service]['keywords'][:3])}, and international regulatory frameworks.\n\n🎯 MISSION: Identify verified, high-conversion prospects with active {selected_service.lower()} service purchasing intent, confirmed buying authority, and immediate project timelines across target geographies.\n\n📊 REAL-TIME RESEARCH METHODOLOGY:\n\n**Primary Research Channels (70% of leads):**\n• B2B Platforms: Research current active platforms in target geography for pharmaceutical/chemical outsourcing\n• Live RFQs: Active service requirements, technical specifications posted ≤60 days\n• Qualification: Verified business profiles, specific {selected_service.lower()} requirements, budget indicators\n\n**Professional Networks (20%):**\n• LinkedIn: R&D managers, procurement directors posting {selected_service.lower()} needs\n• Company updates: Recent hiring for relevant technical roles (indicates active projects)\n• Industry networks: Current member activity, conference participation\n\n**Market Intelligence (10%):**\n• Trade publications: Recent outsourcing announcements, partnership news\n• Regulatory updates: Current compliance requirements affecting {selected_service.lower()}\n• Business news: Funding rounds, R&D investments, facility developments\n\n🔍 DYNAMIC KEYWORD STRATEGY:\n\n**Service-Specific High-Intent:**\n• \"{selected_service.lower()} service provider [geography]\"\n• \"{selected_service.lower()} contract manufacturing RFQ\"\n• \"{selected_service.lower()} outsourcing partner [capacity]\"\n• \"pharmaceutical {selected_service.lower()} services\"\n\n**Technical Requirements:**\n• \"{', '.join(SERVICES_CONFIG[selected_service]['keywords'][:2])} commercial scale\"\n• \"cGMP {selected_service.lower()} manufacturing\"\n• \"API {selected_service.lower()} services\"\n• \"custom {selected_service.lower()} development\"\n\n**Pain-Point Driven:**\n• Search for companies mentioning: \"{SERVICES_CONFIG[selected_service]['pain_points']}\"\n• \"outsourcing {selected_service.lower()} to reduce costs\"\n• \"{selected_service.lower()} capacity constraints\"\n• \"regulatory compliance {selected_service.lower()}\"\n\n**Value Proposition Alignment:**\n• Target companies needing: \"{SERVICES_CONFIG[selected_service]['value_proposition']}\"\n• \"scale-up {selected_service.lower()} production\"\n• \"technology transfer {selected_service.lower()}\"\n\n✅ DYNAMIC QUALIFICATION MATRIX (Score 1-10):\n\n**IMMEDIATE PROSPECTS (9-10 points):**\n• Active RFQ with specific {selected_service.lower()} requirements\n• Budget approved or funding confirmed for {selected_service.lower()} projects\n• Implementation timeline ≤6 months\n• Direct decision-maker involvement\n• Regulatory or commercial deadline driving urgency\n\n**STRONG PROSPECTS (7-8 points):**\n• Documented {selected_service.lower()} service requirements\n• Company R&D expansion in relevant therapeutic areas\n• Previous outsourcing history in similar services\n• Technical team actively evaluating {selected_service.lower()} providers\n• Pipeline development requiring {selected_service.lower()} capabilities\n\n**QUALIFIED LEADS (5-6 points):**\n• General interest in {selected_service.lower()} services\n• Company profile matches ideal customer (pharma/biotech/chemical)\n• Revenue/funding level supports service investment\n• Geographic location within target markets\n• Some project indicators or development activity\n\n📋 ENHANCED OUTPUT TABLE FORMAT:\n\n| Rank | Qualification Score | Company Name | Contact Person & Title | Industry Vertical | Specific Solvent Requirements | Technical Specifications | Estimated Budget Range | Implementation Timeline | Decision Authority Level | Geographic Location | Direct Contact Details | Source Platform & Date | Buying Triggers | Pain Points | Business Verification | Recommended Next Actions |\n\n📝 COMPREHENSIVE DATA REQUIREMENTS:\n\n**Contact Intelligence:**\n• Full name + exact functional title (avoid generic \"Manager\")\n• Direct phone/email when available\n• LinkedIn profile verification\n• Decision-making authority level (Approver/Influencer/User)\n\n**Company Intelligence:**\n• Specific industry subsector (Pharma API, Automotive Coatings, etc.)\n• Annual revenue range with source\n• Number of employees and facilities\n• Recent business developments (expansions, acquisitions)\n\n**Technical Requirements:**\n• Specific solvents used (IPA, Acetone, MEK, Toluene, etc.)\n• Current volumes and capacity requirements\n• Purity specifications and quality standards\n• Automation level preferences\n\n**Commercial Intelligence:**\n• Budget range with confidence level\n• CAPEX cycle and approval process timeline\n• Current equipment vendor relationships\n• Competitive evaluation criteria\n\n🔄 SYSTEMATIC RESEARCH WORKFLOW:\n\n1. **Multi-Channel Search Execution:**\n   • Deploy keyword combinations across all platforms simultaneously\n   • Filter for recency (≤90 days) and geographic relevance\n   • Cross-reference company data across multiple sources\n\n2. **Business Verification Protocol:**\n   • Validate company registration via appropriate business directories\n   • Confirm operational status through recent activity indicators\n   • Verify contact authority through LinkedIn and company websites\n\n3. **Technical Requirement Analysis:**\n   • Extract specific equipment specifications from inquiries\n   • Identify capacity requirements and technical constraints\n   • Assess fit with available solution portfolio\n\n4. **Commercial Qualification:**\n   • Estimate budget capacity from company size and project scope\n   • Identify decision timeline from urgency indicators\n   • Map stakeholder influence and approval processes\n\n5. **Competitive Intelligence:**\n   • Research current vendor relationships\n   • Identify potential competitive threats\n   • Assess switching costs and barriers\n\n6. **Lead Scoring & Prioritization:**\n   • Apply qualification matrix consistently\n   • Rank by conversion probability and deal size\n   • Ensure geographic and industry diversity\n\n🚫 ENHANCED EXCLUSION CRITERIA:\n\n• Trading companies, distributors, or equipment brokers\n• Generic inquiries without specific technical requirements\n• Companies with recent major equipment installations (≤2 years)\n• Contacts without verified business email domains\n• Inquiries older than 90 days without exceptional circumstances\n• Companies below minimum revenue threshold for target solution\n• Regions with known regulatory or payment challenges\n\n� QUALITY ASSURANCE STANDARDS:\n\n• All data must be factually verifiable through source documentation\n• No assumptions or extrapolations beyond available evidence\n• Recent activity evidence required (inquiries, posts, updates ≤60 days)\n• Complete company profiles with legitimate operational presence\n• Direct manufacturing end-users only (no intermediaries)\n• Geographic compliance with target market regulations\n\nDELIVERABLE: Ranked table of qualified leads with complete intelligence profile for immediate sales execution. Include confidence levels for estimated data and mark any inferred information clearly."
+      "content": f"You are an elite B2B lead researcher with 10+ years specializing in global chemical manufacturing and pharmaceutical services, with deep expertise in {selected_service.lower()}, {', '.join(SERVICES_CONFIG[selected_service]['keywords'][:3])}, and international regulatory frameworks.\n\n🎯 MISSION: Identify verified, high-conversion prospects with active {selected_service.lower()} service purchasing intent, confirmed buying authority, and immediate project timelines across target geographies.\n\n📊 REAL-TIME RESEARCH METHODOLOGY:\n\n**Primary Research Channels (70% of leads):**\n• B2B Platforms: Research current active platforms in target geography for pharmaceutical/chemical outsourcing\n• Live RFQs: Active service requirements, technical specifications posted ≤60 days\n• Qualification: Verified business profiles, specific {selected_service.lower()} requirements, budget indicators\n\n**Professional Networks (20%):**\n• LinkedIn: R&D managers, procurement directors posting {selected_service.lower()} needs\n• Company updates: Recent hiring for relevant technical roles (indicates active projects)\n• Industry networks: Current member activity, conference participation\n\n**Market Intelligence (10%):**\n• Trade publications: Recent outsourcing announcements, partnership news\n• Regulatory updates: Current compliance requirements affecting {selected_service.lower()}\n• Business news: Funding rounds, R&D investments, facility developments\n\n🔍 DYNAMIC KEYWORD STRATEGY:\n\n**Service-Specific High-Intent:**\n• \"{selected_service.lower()} service provider [geography]\"\n• \"{selected_service.lower()} contract manufacturing RFQ\"\n• \"{selected_service.lower()} outsourcing partner [capacity]\"\n• \"pharmaceutical {selected_service.lower()} services\"\n\n**Technical Requirements:**\n• \"{', '.join(SERVICES_CONFIG[selected_service]['keywords'][:2])} commercial scale\"\n• \"cGMP {selected_service.lower()} manufacturing\"\n• \"API {selected_service.lower()} services\"\n• \"custom {selected_service.lower()} development\"\n\n**Pain-Point Driven:**\n• Search for companies mentioning: \"{SERVICES_CONFIG[selected_service]['pain_points']}\"\n• \"outsourcing {selected_service.lower()} to reduce costs\"\n• \"{selected_service.lower()} capacity constraints\"\n• \"regulatory compliance {selected_service.lower()}\"\n\n**Value Proposition Alignment:**\n• Target companies needing: \"{SERVICES_CONFIG[selected_service]['value_proposition']}\"\n• \"scale-up {selected_service.lower()} production\"\n• \"technology transfer {selected_service.lower()}\"\n\n✅ DYNAMIC QUALIFICATION MATRIX (Score 1-10):\n\n**IMMEDIATE PROSPECTS (9-10 points):**\n• Active RFQ with specific {selected_service.lower()} requirements\n• Budget approved or funding confirmed for {selected_service.lower()} projects\n• Implementation timeline ≤6 months\n• Direct decision-maker involvement\n• Regulatory or commercial deadline driving urgency\n\n**STRONG PROSPECTS (7-8 points):**\n• Documented {selected_service.lower()} service requirements\n• Company R&D expansion in relevant therapeutic areas\n• Previous outsourcing history in similar services\n• Technical team actively evaluating {selected_service.lower()} providers\n• Pipeline development requiring {selected_service.lower()} capabilities\n\n**QUALIFIED LEADS (5-6 points):**\n• General interest in {selected_service.lower()} services\n• Company profile matches ideal customer (pharma/biotech/chemical)\n• Revenue/funding level supports service investment\n• Geographic location within target markets\n• Some project indicators or development activity\n\n📋 ENHANCED OUTPUT TABLE FORMAT:\n\n| Qualification Score | Company Name | Contact Person & Title | Industry Vertical | Specific Solvent Requirements | Technical Specifications | Estimated Budget Range | Implementation Timeline | Decision Authority Level | Geographic Location | Direct Contact Details | Source Platform & Date | Buying Triggers | Pain Points | Business Verification | Recommended Next Actions |\n\n📝 COMPREHENSIVE DATA REQUIREMENTS:\n\n**Contact Intelligence:**\n• Full name + exact functional title (avoid generic \"Manager\")\n• Direct phone/email when available\n• LinkedIn profile verification\n• Decision-making authority level (Approver/Influencer/User)\n\n**Company Intelligence:**\n• Specific industry subsector (Pharma API, Automotive Coatings, etc.)\n• Annual revenue range with source\n• Number of employees and facilities\n• Recent business developments (expansions, acquisitions)\n\n**Technical Requirements:**\n• Specific solvents used (IPA, Acetone, MEK, Toluene, etc.)\n• Current volumes and capacity requirements\n• Purity specifications and quality standards\n• Automation level preferences\n\n**Commercial Intelligence:**\n• Budget range with confidence level\n• CAPEX cycle and approval process timeline\n• Current equipment vendor relationships\n• Competitive evaluation criteria\n\n🔄 SYSTEMATIC RESEARCH WORKFLOW:\n\n1. **Multi-Channel Search Execution:**\n   • Deploy keyword combinations across all platforms simultaneously\n   • Filter for recency (≤90 days) and geographic relevance\n   • Cross-reference company data across multiple sources\n\n2. **Business Verification Protocol:**\n   • Validate company registration via appropriate business directories\n   • Confirm operational status through recent activity indicators\n   • Verify contact authority through LinkedIn and company websites\n\n3. **Technical Requirement Analysis:**\n   • Extract specific equipment specifications from inquiries\n   • Identify capacity requirements and technical constraints\n   • Assess fit with available solution portfolio\n\n4. **Commercial Qualification:**\n   • Estimate budget capacity from company size and project scope\n   • Identify decision timeline from urgency indicators\n   • Map stakeholder influence and approval processes\n\n5. **Competitive Intelligence:**\n   • Research current vendor relationships\n   • Identify potential competitive threats\n   • Assess switching costs and barriers\n\n6. **Lead Scoring & Prioritization:**\n   • Apply qualification matrix consistently\n   • Rank by conversion probability and deal size\n   • Ensure geographic and industry diversity\n\n🚫 ENHANCED EXCLUSION CRITERIA:\n\n• Trading companies, distributors, or equipment brokers\n• Generic inquiries without specific technical requirements\n• Companies with recent major equipment installations (≤2 years)\n• Contacts without verified business email domains\n• Inquiries older than 90 days without exceptional circumstances\n• Companies below minimum revenue threshold for target solution\n• Regions with known regulatory or payment challenges\n\n� QUALITY ASSURANCE STANDARDS:\n\n• All data must be factually verifiable through source documentation\n• No assumptions or extrapolations beyond available evidence\n• Recent activity evidence required (inquiries, posts, updates ≤60 days)\n• Complete company profiles with legitimate operational presence\n• Direct manufacturing end-users only (no intermediaries)\n• Geographic compliance with target market regulations\n\nDELIVERABLE: Ranked table of qualified leads with complete intelligence profile for immediate sales execution. Include confidence levels for estimated data and mark any inferred information clearly."
     },
     {
       "role": "user",
@@ -445,7 +501,7 @@ def main():
     # ...existing code...
     
     # Set API key directly in code
-    st.session_state["PERPLEXITY_API_KEY"] = os.environ.get("PERPLEXITY_API_KEY")  # <-- Set your actual API key here
+    st.session_state["PERPLEXITY_API_KEY"] = os.environ.get("PERPLEXITY_API_KEY") # <-- Set your actual API key here
     # Get default payload with selected service and apply filters
     default_payload = get_default_payload(selected_service)
     default_payload["max_tokens"] = 4000
@@ -570,6 +626,24 @@ Research the most active and current platforms in {geography} for:
     if st.session_state.get("result_df") is not None:
         st.subheader("📊 Lead Results")
         
+        # Add download button
+        @st.cache_data
+        def convert_df_to_excel(df):
+            import io
+            output = io.BytesIO()
+            with pd.ExcelWriter(output, engine='openpyxl') as writer:
+                df.to_excel(writer, index=False, sheet_name='Leads')
+            return output.getvalue()
+        
+        excel_data = convert_df_to_excel(st.session_state["result_df"])
+        st.download_button(
+            label="📥 Download Results as Excel",
+            data=excel_data,
+            file_name=f"leads_{selected_service.replace(' ', '_')}_{geography}_{num_leads}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            type="secondary"
+        )
+        
         # Display the dataframe with selection
         selected_indices = st.dataframe(
             st.session_state["result_df"], 
@@ -613,12 +687,13 @@ Research the most active and current platforms in {geography} for:
                         pain_point,
                         cta,
                         content_type,
-                        selected_service
+                        selected_service,
+                        geography  # Pass geography parameter
                     )
                     
                     # Show content in expandable section
                     if content_type == "Generate Contact Profile":
-                        st.success("✅ LinkedIn Profile Research Complete!")
+                        st.success("✅ LinkedIn|Google Profile Research Complete!")
                         with st.expander("👤 Contact Insights", expanded=True):
                             st.markdown(content)
                     elif content_type == "Generate Personalized Email":
