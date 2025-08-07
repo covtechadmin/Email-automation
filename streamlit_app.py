@@ -321,8 +321,8 @@ def validate_excel_columns(df: pd.DataFrame) -> bool:
 def main():
     st.set_page_config(page_title="Email Automation App", page_icon="📧", layout="wide")
     
-    st.title("📧 Email Automation with Azure Graph")
-    st.markdown("Automate email sending to multiple contacts using templated emails and Azure Graph API")
+    st.title("📧Covvalent Email Automation Tool")
+    st.markdown("Automate email sending to multiple contacts using templated emails. Have Fun: from Nikhil :)")
     
     # Sidebar for configuration
     st.sidebar.header("Configuration")
