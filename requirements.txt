@@ -4,3 +4,4 @@ openpyxl
 msal
 requests
 python-dotenv
+streamlit-quill
