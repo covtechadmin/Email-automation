@@ -19,6 +19,9 @@ import email
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 import re
+import random
+import string
+import datetime
 
 # Load environment variables
 load_dotenv()
@@ -307,6 +310,77 @@ def parse_eml_file(eml_content: bytes) -> Dict[str, str]:
         st.error(f"Error parsing EML file: {str(e)}")
         return {'subject': '', 'html_body': '', 'plain_body': ''}
 
+class OTPVerification:
+    """Handle OTP verification for sender email authorization"""
+    
+    def __init__(self, graph_client: AzureGraphClient):
+        self.graph_client = graph_client
+        self.authorized_sender = "nikhil.sharma@covvalent.com"
+        
+    def generate_otp(self) -> str:
+        """Generate a 6-digit OTP"""
+        return ''.join(random.choices(string.digits, k=6))
+    
+    def send_otp(self, target_email: str, otp: str) -> bool:
+        """Send OTP from authorized sender to target email"""
+        try:
+            subject = "Email Automation - Sender Verification OTP"
+            body = f"""
+            <html>
+            <body style="font-family: Arial, sans-serif; line-height: 1.6;">
+                <div style="max-width: 600px; margin: 0 auto; padding: 20px;">
+                    <h2 style="color: #2E86AB;">Covvalent Email Automation</h2>
+                    <h3>Sender Email Verification</h3>
+                    
+                    <p>Someone is trying to use <strong>{target_email}</strong> as a sender email in the Covvalent Email Automation tool.</p>
+                    
+                    <div style="background-color: #f0f8ff; padding: 20px; border-radius: 5px; margin: 20px 0;">
+                        <h2 style="color: #2E86AB; text-align: center; font-size: 32px; margin: 10px 0;">
+                            {otp}
+                        </h2>
+                        <p style="text-align: center; margin: 5px 0;"><strong>Your verification code</strong></p>
+                    </div>
+                    
+                    <p><strong>Instructions:</strong></p>
+                    <ul>
+                        <li>Enter this 6-digit code in the Email Automation app</li>
+                        <li>This code expires in 10 minutes</li>
+                        <li>If you didn't request this, please ignore this email</li>
+                    </ul>
+                    
+                    <hr style="margin: 30px 0; border: none; border-top: 1px solid #ddd;">
+                    <p style="font-size: 12px; color: #666;">
+                        This is an automated message from Covvalent Email Automation Tool.<br>
+                        For security purposes, please do not share this code with anyone.
+                    </p>
+                </div>
+            </body>
+            </html>
+            """
+            
+            success = self.graph_client.send_email(
+                from_email=self.authorized_sender,
+                to_email=target_email,
+                cc_emails=[],
+                subject=subject,
+                body=body
+            )
+            
+            return success
+            
+        except Exception as e:
+            st.error(f"Failed to send OTP: {str(e)}")
+            return False
+    
+    def verify_otp(self, entered_otp: str, stored_otp: str, timestamp: datetime.datetime) -> bool:
+        """Verify OTP and check if it's still valid"""
+        # Check if OTP has expired (10 minutes)
+        if datetime.datetime.now() - timestamp > datetime.timedelta(minutes=10):
+            return False
+            
+        # Check if OTP matches
+        return entered_otp.strip() == stored_otp.strip()
+
 def validate_excel_columns(df: pd.DataFrame) -> bool:
     """Validate that the Excel file has required columns"""
     required_columns = ['Company Name', 'Company Email', 'Customer Name']
@@ -319,7 +393,12 @@ def validate_excel_columns(df: pd.DataFrame) -> bool:
     return True
 
 def main():
-    st.set_page_config(page_title="Email Automation App", page_icon="📧", layout="wide")
+    st.set_page_config(
+        page_title="Email Automation App", 
+        page_icon="📧", 
+        layout="wide",
+        initial_sidebar_state="collapsed"
+    )
     
     st.title("📧 Covvalent Email Automation Tool")
     st.markdown("Automate email sending to multiple contacts (up to 200) using templated emails. Have Fun: from Nikhil :)")
@@ -336,7 +415,142 @@ def main():
     # Initialize Azure Graph client
     graph_client = AzureGraphClient()
     
-    # Main content
+    # Initialize OTP verification
+    otp_verifier = OTPVerification(graph_client)
+    
+    # Initialize session state for OTP
+    if 'verified_sender' not in st.session_state:
+        st.session_state.verified_sender = None
+    if 'verification_timestamp' not in st.session_state:
+        st.session_state.verification_timestamp = None
+    if 'otp_data' not in st.session_state:
+        st.session_state.otp_data = {}
+    
+    # Check if sender verification has expired (2 hours)
+    if st.session_state.verified_sender and st.session_state.verification_timestamp:
+        elapsed_since_verification = datetime.datetime.now() - st.session_state.verification_timestamp
+        if elapsed_since_verification > datetime.timedelta(hours=2):
+            st.session_state.verified_sender = None
+            st.session_state.verification_timestamp = None
+            st.warning("🔒 Your sender verification has expired. Please verify again.")
+    
+    # Sender Email Verification Section
+    st.header("🔐 Sender Email Verification")
+    
+    if st.session_state.verified_sender:
+        st.success(f"✅ Verified sender: **{st.session_state.verified_sender}**")
+        if st.button("Change Sender Email"):
+            st.session_state.verified_sender = None
+            st.session_state.verification_timestamp = None
+            st.session_state.otp_data = {}
+            st.rerun()
+    else:
+        st.info("For security, sender email must be verified with OTP sent from nikhil.sharma@covvalent.com")
+        
+        col_verify1, col_verify2 = st.columns([2, 1])
+        
+        with col_verify1:
+            sender_email = st.text_input(
+                "Enter Sender Email Address",
+                placeholder="your.email@covvalent.com",
+                help="The email address that will send the emails"
+            )
+        
+        with col_verify2:
+            st.write("")  # Spacer
+            st.write("")  # Spacer
+            send_otp_button = st.button("Send OTP", type="secondary", disabled=not sender_email)
+        
+        if send_otp_button and sender_email:
+            # Generate and send OTP
+            otp = otp_verifier.generate_otp()
+            timestamp = datetime.datetime.now()
+            
+            with st.spinner("Sending OTP..."):
+                if graph_client.get_access_token():
+                    success = otp_verifier.send_otp(sender_email, otp)
+                    if success:
+                        st.session_state.otp_data = {
+                            'otp': otp,
+                            'email': sender_email,
+                            'timestamp': timestamp
+                        }
+                        st.success(f"✅ OTP sent to {sender_email}")
+                        st.info("Check your email and enter the 6-digit code below")
+                        st.rerun()
+                    else:
+                        st.error("Failed to send OTP. Please try again.")
+                else:
+                    st.error("Authentication failed. Please check your Azure credentials.")
+        
+        # OTP verification input
+        if st.session_state.otp_data:
+            # Check if OTP has expired before showing input
+            elapsed = datetime.datetime.now() - st.session_state.otp_data['timestamp']
+            remaining = datetime.timedelta(minutes=10) - elapsed
+            
+            if remaining.total_seconds() <= 0:
+                # OTP has expired - clear it and show message
+                st.error("⏰ OTP has expired. Please request a new one.")
+                st.session_state.otp_data = {}
+                if st.button("Request New OTP"):
+                    st.rerun()
+            else:
+                # OTP is still valid - show verification form
+                st.subheader("Enter Verification Code")
+                
+                # Show time remaining with color coding
+                minutes_left = int(remaining.total_seconds()//60)
+                seconds_left = int(remaining.total_seconds()%60)
+                
+                if minutes_left >= 5:
+                    st.info(f"⏰ OTP expires in {minutes_left}:{seconds_left:02d} minutes")
+                elif minutes_left >= 2:
+                    st.warning(f"⚠️ OTP expires in {minutes_left}:{seconds_left:02d} minutes")
+                else:
+                    st.error(f"🚨 OTP expires in {minutes_left}:{seconds_left:02d} minutes - Hurry!")
+                
+                col_otp1, col_otp2 = st.columns([2, 1])
+                
+                with col_otp1:
+                    entered_otp = st.text_input(
+                        "6-Digit OTP Code",
+                        max_chars=6,
+                        placeholder="123456",
+                        help="Enter the code sent to your email"
+                    )
+                
+                with col_otp2:
+                    st.write("")  # Spacer
+                    st.write("")  # Spacer
+                    verify_button = st.button("Verify", type="primary", disabled=not entered_otp or len(entered_otp) != 6)
+                
+                if verify_button and entered_otp:
+                    # Double-check expiry at verification time
+                    if otp_verifier.verify_otp(entered_otp, st.session_state.otp_data['otp'], st.session_state.otp_data['timestamp']):
+                        st.session_state.verified_sender = st.session_state.otp_data['email']
+                        st.session_state.verification_timestamp = datetime.datetime.now()
+                        st.session_state.otp_data = {}
+                        st.success("✅ Email verified successfully!")
+                        st.rerun()
+                    else:
+                        # Check if it failed due to expiry or wrong code
+                        current_elapsed = datetime.datetime.now() - st.session_state.otp_data['timestamp']
+                        if current_elapsed > datetime.timedelta(minutes=10):
+                            st.error("❌ OTP has expired during verification. Please request a new one.")
+                            st.session_state.otp_data = {}
+                        else:
+                            st.error("❌ Invalid OTP code. Please check and try again.")
+                
+                # Add auto-refresh for countdown (optional)
+                st.empty()  # Placeholder for potential auto-refresh
+    
+    # Only show the rest of the app if sender is verified
+    if not st.session_state.verified_sender:
+        st.warning("🔒 Please verify your sender email address to continue")
+        return
+    
+    # Main content (only shown after verification)
     col1, col2 = st.columns([1, 1])
     
     with col1:
@@ -385,10 +599,12 @@ def main():
     col3, col4 = st.columns([1, 1])
     
     with col3:
-        from_email = st.text_input(
-            "From Email Address",
-            placeholder="sender@company.com",
-            help="The email address that will send the emails"
+        # Show verified sender (read-only)
+        st.text_input(
+            "From Email Address (Verified)",
+            value=st.session_state.verified_sender,
+            disabled=True,
+            help="This is your verified sender email"
         )
         
         subject_template = st.text_input(
@@ -602,12 +818,12 @@ Best regards,
         if batch_size > 500:
             st.warning("⚠️ Large batch detected. Consider splitting into smaller batches for better reliability.")
     
-    if st.button("Send Emails to All Contacts", type="primary", disabled=(df is None or not email_template or not from_email)):
+    if st.button("Send Emails to All Contacts", type="primary", disabled=(df is None or not email_template or not st.session_state.verified_sender)):
         if df is None:
             st.error("Please upload an Excel file first")
             return
         
-        if not email_template or not from_email:
+        if not email_template or not st.session_state.verified_sender:
             st.error("Please fill in all required fields")
             return
         
@@ -646,7 +862,7 @@ Best regards,
                     st.write(f"Sending email to {row['Customer Name']} at {row['Company Email']}...")
                 
                 success = graph_client.send_email(
-                    from_email=from_email,
+                    from_email=st.session_state.verified_sender,
                     to_email=row['Company Email'],
                     cc_emails=cc_emails,
                     subject=final_subject,
