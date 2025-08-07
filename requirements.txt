@@ -1,3 +1,6 @@
 streamlit
 pandas
 openpyxl
+msal
+requests
+python-dotenv
