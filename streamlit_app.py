@@ -321,9 +321,9 @@ def validate_excel_columns(df: pd.DataFrame) -> bool:
 def main():
     st.set_page_config(page_title="Email Automation App", page_icon="📧", layout="wide")
     
-    st.title("📧Covvalent Email Automation Tool")
-    st.markdown("Automate email sending to multiple contacts using templated emails. Have Fun: from Nikhil :)")
-    
+    st.title("📧 Covvalent Email Automation Tool")
+    st.markdown("Automate email sending to multiple contacts (up to 200) using templated emails. Have Fun: from Nikhil :)")
+
     # Sidebar for configuration
     st.sidebar.header("Configuration")
     
@@ -593,6 +593,15 @@ Best regards,
     # Send emails section
     st.header("🚀 Send Emails")
     
+    # Show batch size information
+    if df is not None:
+        batch_size = len(df)
+        estimated_time = batch_size * (0.5 if batch_size > 100 else 1) / 60  # minutes
+        st.info(f"**Batch Info:** {batch_size} recipients | Estimated time: {estimated_time:.1f} minutes")
+        
+        if batch_size > 500:
+            st.warning("⚠️ Large batch detected. Consider splitting into smaller batches for better reliability.")
+    
     if st.button("Send Emails to All Contacts", type="primary", disabled=(df is None or not email_template or not from_email)):
         if df is None:
             st.error("Please upload an Excel file first")
@@ -659,8 +668,11 @@ Best regards,
                 progress = (index + 1) / len(df)
                 progress_bar.progress(progress)
                 
-                # Small delay to avoid rate limiting
-                time.sleep(1)
+                # Dynamic delay based on batch size to avoid rate limiting
+                if len(df) > 100:
+                    time.sleep(0.5)  # Faster for large batches
+                else:
+                    time.sleep(1)    # Conservative for small batches
                 
             except Exception as e:
                 failed_sends += 1
