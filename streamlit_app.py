@@ -125,12 +125,42 @@ class AzureGraphClient:
             st.error(f"Error sending email to {to_email}: {str(e)}")
             return False
 
-def replace_template_variables(template: str, replacements: Dict[str, str]) -> str:
+def replace_template_variables(template: str, replacements: Dict[str, str], is_html: bool = False) -> str:
     """Replace template variables with actual values"""
     result = template
-    for key, value in replacements.items():
-        placeholder = f"<{key}>"
-        result = result.replace(placeholder, str(value) if value else "")
+    
+    if is_html:
+        # For HTML content, we need to be more careful about replacements
+        # Handle HTML-encoded placeholders and preserve HTML structure
+        import html
+        
+        for key, value in replacements.items():
+            placeholder = f"<{key}>"
+            safe_value = str(value) if value else ""
+            
+            # Try multiple replacement patterns for HTML content
+            # 1. Direct replacement
+            result = result.replace(placeholder, safe_value)
+            
+            # 2. HTML-encoded replacement (&lt; and &gt;)
+            encoded_placeholder = html.escape(placeholder)
+            result = result.replace(encoded_placeholder, safe_value)
+            
+            # 3. Handle placeholders that might be split across tags
+            # Look for patterns like <span><{key}></span> or similar
+            pattern = rf'(<[^>]*>)*\s*<\s*{re.escape(key)}\s*>\s*(<[^>]*>)*'
+            result = re.sub(pattern, safe_value, result, flags=re.IGNORECASE)
+            
+            # 4. Handle placeholders with extra whitespace
+            spaced_placeholder = f"< {key} >"
+            result = result.replace(spaced_placeholder, safe_value)
+            
+    else:
+        # Plain text replacement (original logic)
+        for key, value in replacements.items():
+            placeholder = f"<{key}>"
+            result = result.replace(placeholder, str(value) if value else "")
+    
     return result
 
 def convert_to_html(text: str, is_html: bool = False) -> str:
@@ -543,8 +573,8 @@ Best regards,
         if preview_index is not None:
             preview_data = df.iloc[preview_index].to_dict()
             
-            preview_subject = replace_template_variables(subject_template, preview_data)
-            preview_body = replace_template_variables(email_template, preview_data)
+            preview_subject = replace_template_variables(subject_template, preview_data, is_html=False)
+            preview_body = replace_template_variables(email_template, preview_data, is_html=is_rich_text)
             preview_body_html = convert_to_html(preview_body, is_html=is_rich_text)
             
             st.subheader("Subject:")
@@ -591,8 +621,8 @@ Best regards,
             try:
                 # Prepare email data
                 contact_data = row.to_dict()
-                final_subject = replace_template_variables(subject_template, contact_data)
-                final_body = replace_template_variables(email_template, contact_data)
+                final_subject = replace_template_variables(subject_template, contact_data, is_html=False)
+                final_body = replace_template_variables(email_template, contact_data, is_html=is_rich_text)
                 final_body_html = convert_to_html(final_body, is_html=is_rich_text)
                 
                 # Get attachment data if available
