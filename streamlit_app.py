@@ -9,6 +9,17 @@ import os
 from typing import List, Dict, Optional
 import time
 
+try:
+    from streamlit_quill import st_quill
+    RICH_TEXT_AVAILABLE = True
+except ImportError:
+    RICH_TEXT_AVAILABLE = False
+
+import email
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
+import re
+
 # Load environment variables
 load_dotenv()
 
@@ -122,35 +133,149 @@ def replace_template_variables(template: str, replacements: Dict[str, str]) -> s
         result = result.replace(placeholder, str(value) if value else "")
     return result
 
-def convert_to_html(text: str) -> str:
-    """Convert plain text to HTML, preserving formatting and converting hyperlinks"""
+def convert_to_html(text: str, is_html: bool = False) -> str:
+    """Convert plain text or HTML to formatted HTML email"""
     if not text:
         return ""
     
-    # Replace newlines with <br> tags
-    html_text = text.replace('\n', '<br>')
+    import re
+    
+    if is_html:
+        # Text is already HTML (from rich text editor or EML)
+        html_text = text
+        
+        # Clean up any existing body/html tags to avoid nesting
+        html_text = re.sub(r'</?html[^>]*>', '', html_text, flags=re.IGNORECASE)
+        html_text = re.sub(r'</?body[^>]*>', '', html_text, flags=re.IGNORECASE)
+        html_text = re.sub(r'</?head[^>]*>', '', html_text, flags=re.IGNORECASE)
+        html_text = re.sub(r'<meta[^>]*>', '', html_text, flags=re.IGNORECASE)
+        
+        # Remove any extra whitespace but preserve intentional formatting
+        html_text = html_text.strip()
+        
+        # Wrap in minimal email structure without overriding styles
+        html_text = f"""<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+</head>
+<body style="margin: 0; padding: 0;">
+    <div>
+        {html_text}
+    </div>
+</body>
+</html>"""
+        return html_text
+    
+    # Handle plain text with markdown formatting while preserving structure
+    html_text = text
+    
+    # Convert markdown-style formatting to HTML
+    # Bold text: **text** or __text__ -> <strong>text</strong>
+    html_text = re.sub(r'\*\*(.*?)\*\*', r'<strong>\1</strong>', html_text)
+    html_text = re.sub(r'__(.*?)__', r'<strong>\1</strong>', html_text)
+    
+    # Italic text: *text* or _text_ -> <em>text</em>
+    html_text = re.sub(r'(?<!\*)\*([^*]+?)\*(?!\*)', r'<em>\1</em>', html_text)
+    html_text = re.sub(r'(?<!_)_([^_]+?)_(?!_)', r'<em>\1</em>', html_text)
     
     # Convert hyperlink syntax [text](url) to HTML links
-    import re
     hyperlink_pattern = r'\[([^\]]+)\]\(([^)]+)\)'
-    html_text = re.sub(hyperlink_pattern, r'<a href="\2" style="color: #0066cc; text-decoration: none;">\1</a>', html_text)
+    html_text = re.sub(hyperlink_pattern, r'<a href="\2" style="color: #0066cc; text-decoration: underline;">\1</a>', html_text)
     
     # Convert simple URLs to clickable links
-    url_pattern = r'(?<!href=")(?<!href=\')(?<!<a href=")(?<!<a href=\')https?://[^\s<>"\']+(?!["\']>)'
-    html_text = re.sub(url_pattern, r'<a href="\g<0>" style="color: #0066cc; text-decoration: none;">\g<0></a>', html_text)
+    url_pattern = r'(?<!href=")(?<!href=\')(?<!<a href=")(?<!<a href=\')(?<!>)https?://[^\s<>"\']+(?!["\']>)(?!</a>)'
+    html_text = re.sub(url_pattern, r'<a href="\g<0>" style="color: #0066cc; text-decoration: underline;">\g<0></a>', html_text)
     
-    # Wrap in basic HTML structure
-    html_text = f"""
-    <html>
-    <body style="font-family: Arial, sans-serif; font-size: 14px; line-height: 1.6; color: #333333;">
-    <div style="max-width: 600px; margin: 0 auto; padding: 20px;">
-    {html_text}
+    # Preserve exact line breaks and spacing
+    # Replace newlines with <br> tags but handle multiple consecutive newlines properly
+    html_text = re.sub(r'\n{3,}', '\n\n', html_text)  # Limit excessive line breaks
+    html_text = html_text.replace('\n', '<br>\n')
+    
+    # Wrap in minimal HTML structure without imposed styling
+    html_text = f"""<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+</head>
+<body style="margin: 0; padding: 10px; font-family: Arial, sans-serif; font-size: 14px; line-height: 1.4;">
+    <div>
+        {html_text}
     </div>
-    </body>
-    </html>
-    """
+</body>
+</html>"""
     
     return html_text
+
+def parse_eml_file(eml_content: bytes) -> Dict[str, str]:
+    """Parse EML file and extract subject, HTML body, and plain text body"""
+    try:
+        # Parse the email message
+        msg = email.message_from_bytes(eml_content)
+        
+        # Extract subject
+        subject = msg.get('Subject', '')
+        if subject:
+            # Decode subject if it's encoded
+            from email.header import decode_header
+            decoded_subject = decode_header(subject)
+            subject = ''.join([
+                text.decode(encoding or 'utf-8') if isinstance(text, bytes) else text
+                for text, encoding in decoded_subject
+            ])
+        
+        # Extract body content
+        html_body = ""
+        plain_body = ""
+        
+        if msg.is_multipart():
+            # Handle multipart messages
+            for part in msg.walk():
+                content_type = part.get_content_type()
+                content_disposition = str(part.get("Content-Disposition"))
+                
+                # Skip attachments
+                if "attachment" in content_disposition:
+                    continue
+                    
+                if content_type == "text/plain":
+                    plain_body = part.get_payload(decode=True).decode('utf-8', errors='ignore')
+                elif content_type == "text/html":
+                    html_body = part.get_payload(decode=True).decode('utf-8', errors='ignore')
+        else:
+            # Handle simple messages
+            content_type = msg.get_content_type()
+            if content_type == "text/plain":
+                plain_body = msg.get_payload(decode=True).decode('utf-8', errors='ignore')
+            elif content_type == "text/html":
+                html_body = msg.get_payload(decode=True).decode('utf-8', errors='ignore')
+        
+        # Clean up HTML body if present
+        if html_body:
+            # Keep only the main content between <body> tags if present
+            body_match = re.search(r'<body[^>]*>(.*?)</body>', html_body, re.DOTALL | re.IGNORECASE)
+            if body_match:
+                html_body = body_match.group(1)
+            
+            # Remove only problematic style attributes, keep formatting ones
+            # Remove only width/height constraints that might break in different clients
+            html_body = re.sub(r'width\s*:\s*[^;}"\'\s]*[;"\']', '', html_body, flags=re.IGNORECASE)
+            html_body = re.sub(r'max-width\s*:\s*[^;}"\'\s]*[;"\']', '', html_body, flags=re.IGNORECASE)
+            
+            # Preserve all other formatting and spacing
+            html_body = html_body.strip()
+        
+        return {
+            'subject': subject,
+            'html_body': html_body,
+            'plain_body': plain_body
+        }
+        
+    except Exception as e:
+        st.error(f"Error parsing EML file: {str(e)}")
+        return {'subject': '', 'html_body': '', 'plain_body': ''}
 
 def validate_excel_columns(df: pd.DataFrame) -> bool:
     """Validate that the Excel file has required columns"""
@@ -254,32 +379,156 @@ def main():
     # Email template
     st.header("📝 Email Template")
     
-    # Add help text for hyperlinks
-    st.info("""
-    **Formatting Tips:**
-    - Use `<Column Name>` for dynamic content from your Excel file
-    - Create hyperlinks with `[Link Text](https://example.com)`
-    - Plain URLs like `https://example.com` will automatically become clickable
-    - Line breaks will be preserved in the email
-    """)
+    # Template input method selection
+    template_method = st.radio(
+        "Choose how to create your email template:",
+        ["Type/Paste Template", "Upload EML File"],
+        help="Upload EML to preserve exact formatting from saved emails"
+    )
     
-    email_template = st.text_area(
-        "Email Body Template",
-        placeholder="""Dear <Customer Name>,
+    # Initialize template variables
+    email_template = ""
+    subject_template = ""
+    is_rich_text = False
+    
+    if template_method == "Upload EML File":
+        st.info("""
+        **EML File Upload:**
+        - Save an email as .eml file from your email client (Outlook: File → Save As → Outlook Message Format)
+        - Upload it here to preserve all formatting, styles, and layout
+        - Add `<Column Name>` placeholders where you want dynamic content
+        - Subject and body will be automatically extracted
+        """)
+        
+        uploaded_eml = st.file_uploader(
+            "Upload EML email file",
+            type=['eml'],
+            help="Upload a saved email file (.eml format)"
+        )
+        
+        if uploaded_eml:
+            eml_data = parse_eml_file(uploaded_eml.read())
+            
+            if eml_data['subject'] or eml_data['html_body'] or eml_data['plain_body']:
+                st.success("✅ EML file loaded successfully!")
+                
+                # Show extracted content
+                col1, col2 = st.columns(2)
+                with col1:
+                    st.subheader("Extracted Subject:")
+                    subject_template = st.text_input(
+                        "Edit subject template:",
+                        value=eml_data['subject'],
+                        help="Add <Column Name> placeholders for dynamic content"
+                    )
+                
+                with col2:
+                    st.subheader("Content Preview:")
+                    if eml_data['html_body']:
+                        st.write("✅ Rich HTML formatting detected")
+                        email_template = eml_data['html_body']
+                        is_rich_text = True
+                    else:
+                        st.write("📝 Plain text content detected")
+                        email_template = eml_data['plain_body']
+                        is_rich_text = False
+                
+                # Allow editing the template with placeholders
+                st.subheader("Edit Template (Add placeholders like <Customer Name>):")
+                if is_rich_text and RICH_TEXT_AVAILABLE:
+                    email_template = st_quill(
+                        value=email_template,
+                        html=True,
+                        toolbar=[
+                            ['bold', 'italic', 'underline'],
+                            ['link'],
+                            [{'list': 'ordered'}, {'list': 'bullet'}],
+                            ['clean']
+                        ],
+                        key="eml_template_editor"
+                    )
+                else:
+                    email_template = st.text_area(
+                        "Email body template:",
+                        value=email_template,
+                        height=400,
+                        help="Add <Column Name> placeholders for dynamic content"
+                    )
+                    if is_rich_text:
+                        st.info("💡 Install `streamlit-quill` to edit with rich text formatting")
+            else:
+                st.error("Could not extract content from EML file. Please check the file format.")
+    
+    else:
+        # Original template creation method
+        # Editor type selection
+        if RICH_TEXT_AVAILABLE:
+            editor_type = st.radio(
+                "Choose editor type:",
+                ["Simple Text Editor", "Rich Text Editor (with formatting)"],
+                help="Rich text editor allows pasting formatted text from email clients"
+            )
+        else:
+            editor_type = "Simple Text Editor"
+            st.info("💡 **Tip:** Install `streamlit-quill` to enable rich text editor with copy-paste formatting support")
+        
+        if editor_type == "Rich Text Editor (with formatting)" and RICH_TEXT_AVAILABLE:
+            st.info("""
+            **Rich Text Editor Tips:**
+            - Paste formatted text directly from your email client
+            - Use the toolbar for formatting (Bold, Italic, etc.)
+            - Use `<Column Name>` for dynamic content from your Excel file
+            - Insert links using the link button in toolbar
+            """)
+            
+            email_template = st_quill(
+                placeholder="Dear <Customer Name>, \n\nI hope this email finds you well...",
+                html=True,
+                toolbar=[
+                    ['bold', 'italic', 'underline'],
+                    ['link'],
+                    [{'list': 'ordered'}, {'list': 'bullet'}],
+                    ['clean']
+                ],
+                key="email_template"
+            )
+            is_rich_text = True
+        else:
+            # Add help text for simple editor
+            st.info("""
+            **Formatting Tips:**
+            - Use `<Column Name>` for dynamic content from your Excel file
+            - **Bold text**: Use `**bold text**` or `__bold text__`
+            - *Italic text*: Use `*italic text*` or `_italic text_`
+            - Create hyperlinks with `[Link Text](https://example.com)`
+            - Plain URLs like `https://example.com` will automatically become clickable
+            - Use double line breaks for new paragraphs
+            """)
+            
+            email_template = st.text_area(
+                "Email Body Template",
+                placeholder="""Dear <Customer Name>,
 
-I hope this email finds you well. I am reaching out from our team regarding <Company Name>.
+I hope this email finds you well. I am reaching out from our team regarding **<Company Name>**.
 
-We would like to discuss potential collaboration opportunities with <Company Name>.
+We would like to discuss *potential collaboration opportunities* with <Company Name>.
+
+**Key Benefits:**
+- Professional service
+- Competitive pricing
+- 24/7 support
 
 Please visit our website at [Company Website](https://www.example.com) to learn more about us.
 
 You can also schedule a meeting with us: https://calendly.com/yourname
 
 Best regards,
-Your Name""",
-        height=250,
-        help="Use markdown-style links [text](url) and template variables <column_name>"
-    )
+**Your Name**
+*Your Title*""",
+                height=300,
+                help="Use markdown-style formatting, links [text](url) and template variables <column_name>"
+            )
+            is_rich_text = False
     
     # Preview section
     if df is not None and email_template and subject_template:
@@ -296,16 +545,20 @@ Your Name""",
             
             preview_subject = replace_template_variables(subject_template, preview_data)
             preview_body = replace_template_variables(email_template, preview_data)
-            preview_body_html = convert_to_html(preview_body)
+            preview_body_html = convert_to_html(preview_body, is_html=is_rich_text)
             
             st.subheader("Subject:")
             st.code(preview_subject)
             
-            st.subheader("Body (Preview):")
-            st.markdown(preview_body)
-            
-            st.subheader("HTML Email Body (What recipients will see):")
-            st.components.v1.html(preview_body_html, height=300, scrolling=True)
+            if is_rich_text:
+                st.subheader("Email Preview (What recipients will see):")
+                st.components.v1.html(preview_body_html, height=400, scrolling=True)
+            else:
+                st.subheader("Body (Preview):")
+                st.markdown(preview_body)
+                
+                st.subheader("HTML Email Body (What recipients will see):")
+                st.components.v1.html(preview_body_html, height=300, scrolling=True)
     
     # Send emails section
     st.header("🚀 Send Emails")
@@ -340,7 +593,7 @@ Your Name""",
                 contact_data = row.to_dict()
                 final_subject = replace_template_variables(subject_template, contact_data)
                 final_body = replace_template_variables(email_template, contact_data)
-                final_body_html = convert_to_html(final_body)
+                final_body_html = convert_to_html(final_body, is_html=is_rich_text)
                 
                 # Get attachment data if available
                 attachment_data = None
