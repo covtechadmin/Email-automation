@@ -68,4 +68,7 @@ jobs:
         with:
           app-name: 'Email-Automation-App'
           slot-name: 'Production'
+          package: .
+          startup-command: 'streamlit run streamlit_app.py'
+
           
